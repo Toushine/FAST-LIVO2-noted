@@ -59,6 +59,10 @@ Sophus Installation for the non-templated/double-only version.
 git clone https://github.com/strasdat/Sophus.git
 cd Sophus
 git checkout a621ff
+# note sophus/so2.cpp:32:26: error: lvalue required as left operand of assignment
+# unit_complex_.real() = 1.;
+# unit_complex_.imag() = 0.;
+# correct: unit_complex_ = std::complex<double>(1.0, 0.0);
 mkdir build && cd build && cmake ..
 make
 sudo make install
@@ -82,6 +86,8 @@ Vikit contains camera models, some math and interpolation functions that we need
 ```bash
 cd catkin_ws/src
 git clone https://github.com/xuankuzcr/rpg_vikit.git
+
+# note: add set(Sophus_LIBRARIES libSophus.so) in vikit_common/CMakeLists.txt:72
 ```
 
 ### 2.6 **livox_ros_driver**
