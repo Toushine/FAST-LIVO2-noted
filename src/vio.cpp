@@ -28,12 +28,14 @@ VIOManager::~VIOManager()
 
 void VIOManager::setImuToLidarExtrinsic(const V3D &transl, const M3D &rot)
 {
+  // get transform of imu frane in lidar frame
   Pli = -rot.transpose() * transl;
   Rli = rot.transpose();
 }
 
 void VIOManager::setLidarToCameraExtrinsic(vector<double> &R, vector<double> &P)
 {
+  // get transform of lidar frame in camera frame
   Rcl << MAT_FROM_ARRAY(R);
   Pcl << VEC_FROM_ARRAY(P);
 }
@@ -42,28 +44,36 @@ void VIOManager::initializeVIO()
 {
   visual_submap = new SubSparseMap;
 
+  // get instrinsic parameters of camera
   fx = cam->fx();
   fy = cam->fy();
   cx = cam->cx();
   cy = cam->cy();
-  image_resize_factor = cam->scale();
-
+  
   printf("intrinsic: %.6lf, %.6lf, %.6lf, %.6lf\n", fx, fy, cx, cy);
 
+  // get image size
   width = cam->width();
   height = cam->height();
+  image_resize_factor = cam->scale();
 
   printf("width: %d, height: %d, scale: %f\n", width, height, image_resize_factor);
+
+  // get transform of of imu in camera frame
   Rci = Rcl * Rli;
   Pci = Rcl * Pli + Pcl;
 
+  // get Jdphi_dR
+  Jdphi_dR = Rci;
+
+  // get Jdp_dR
   V3D Pic;
   M3D tmp;
-  Jdphi_dR = Rci;
   Pic = -Rci.transpose() * Pci;
   tmp << SKEW_SYM_MATRX(Pic);
   Jdp_dR = -Rci * tmp;
 
+  // divide image to grid
   if (grid_size > 10)
   {
     grid_n_width = ceil(static_cast<double>(width / grid_size));
@@ -98,21 +108,29 @@ void VIOManager::initializeVIO()
         std::vector<V3D> SamplePointsEachGrid;
         int index = (grid_row - 1) * grid_n_width + grid_col - 1;
 
-        if (grid_row == 1 || grid_col == 1 || grid_row == grid_n_height || grid_col == grid_n_width) border_flag[index] = 1;
+        // set flag to 1 if the grid is on the border
+        if (grid_row == 1 || grid_col == 1 || grid_row == grid_n_height ||
+            grid_col == grid_n_width){
+          border_flag[index] = 1;
+        }
 
+        // calculate grid cell's center point position in 2D image coordinate
+        // "a ray is cast backward along the central pixel"
         int u = grid_size / 2 + (grid_col - 1) * grid_size;
         int v = grid_size / 2 + (grid_row - 1) * grid_size;
-        // it[ u + v * width ] = 255;
+
+        // "sample points are uniformly distributed along the ray in the depth
+        // direction from d_min to d_max"
         for (float d_temp = d_min; d_temp <= d_max; d_temp += step)
         {
           V3D xyz;
           xyz = cam->cam2world(u, v);
           xyz *= d_temp / xyz[2];
-          // xyz[0] = (u - cx) / fx * d_temp;
-          // xyz[1] = (v - cy) / fy * d_temp;
-          // xyz[2] = d_temp;
+
           SamplePointsEachGrid.push_back(xyz);
         }
+
+        // save sample points of this grid cell
         rays_with_sample_points.push_back(SamplePointsEachGrid);
       }
     }

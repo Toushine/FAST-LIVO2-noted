@@ -80,35 +80,106 @@ public:
   }
 };
 
+/// \brief VIO manager
 class VIOManager
 {
 public:
+  /// \brief Divide the image into grids
   int grid_size;
+  /// \brief abstract camera model
   vk::AbstractCamera *cam;
+  /// \brief pinhole camera model
   vk::PinholeCamera *pinhole_cam;
+
+  /// \brief State of vio system
   StatesGroup *state;
+  /// \brief State of vio system after propagation
   StatesGroup *state_propagat;
-  M3D Rli, Rci, Rcl, Rcw, Jdphi_dR, Jdp_dt, Jdp_dR;
-  V3D Pli, Pci, Pcl, Pcw;
+
+  /// \brief jacobian of the rotatin vector w.r.t rotation matrix
+  /// \note rotation matrix itself
+  M3D Jdphi_dR;
+  /// \brief jacobian of the position w.r.t translation
+  M3D Jdp_dt;
+  /// \brief jacobian of the position w.r.t rotation
+  M3D Jdp_dR;
+  
+  /// \brief rotation of imu frame in lidar frame
+  M3D Rli;
+  /// \brief translation of imu frame in lidar frame
+  V3D Pli;
+  
+  /// \brief rotation of imu frame in camera frame
+  M3D Rci;
+  /// \brief translation of imu frmae in camera frame
+  V3D Pci;
+
+  /// \brief rotation of lidar frame in camera frame
+  M3D Rcl;
+  /// \brief translation of lidar frame in camera frame
+  V3D Pcl;
+
+  /// \brief rotation of camera frame in world frame
+  M3D Rcw;
+  /// \brief translation of world frame in camera frame
+  V3D Pcw;
+
   vector<int> grid_num;
   vector<int> map_index;
+  /// \brief whether the pixel is in the border of the grid cell
   vector<int> border_flag;
   vector<int> update_flag;
   vector<float> map_dist;
   vector<float> scan_value;
   vector<float> patch_buffer;
-  bool normal_en, inverse_composition_en, exposure_estimate_en, raycast_en, has_ref_patch_cache;
-  bool ncc_en = false, colmap_output_en = false;
 
-  int width, height, grid_n_width, grid_n_height, length;
+  /// \brief whether to enable Normal Refine V.E
+  bool normal_en;
+  /// \brief whether to enable Inverse Composional formulation in formula(23)
+  bool inverse_composition_en;
+  /// \brief whether to enable extimate the image exposure time
+  bool exposure_estimate_en;
+  /// \brief whether to enable on-demand voxel raycasting VII.A.2
+  bool raycast_en;
+  /// \brief whether has reference patch cache
+  bool has_ref_patch_cache;
+  /// \brief whether to use NCC(Normalized Cross Correlation) to compute the
+  /// similarity between two patches
+  bool ncc_en = false;
+  /// \brief whether to output colmap
+  bool colmap_output_en = false;
+
+  /// \brief Image width(pixel)
+  int width;
+  /// \brief Image height(pixel)
+  int height;
+  /// \brief resize factor of Image
   double image_resize_factor;
-  double fx, fy, cx, cy;
+
+  /// \brief pixels num in grid width
+  int grid_n_width;
+  /// \brief pixels num in grid height
+  int grid_n_height;
+  /// \brief pixels num in grid 
+  int length;
+
+  /// \brief focal length in x direction
+  double fx;
+  /// \brief focal length in y direction
+  double fy;
+  /// \brief Coordinates of the principal point in x direction
+  double cx;
+  /// \brief Coordinates of the principal point in y direction
+  double cy;
+
   int patch_pyrimid_level, patch_size, patch_size_total, patch_size_half, border, warp_len;
   int max_iterations, total_points;
 
   double img_point_cov, outlier_threshold, ncc_thre;
-  
+
   SubSparseMap *visual_submap;
+
+  /// \brief sample points in image grids(length)
   std::vector<std::vector<V3D>> rays_with_sample_points;
 
   double compute_jacobian_time, update_ekf_time;

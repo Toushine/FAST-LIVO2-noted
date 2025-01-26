@@ -120,7 +120,7 @@ typedef struct pointWithVar
   };
 } pointWithVar;
 
-
+/// \brief The state of the system
 struct StatesGroup
 {
   StatesGroup()
@@ -210,14 +210,28 @@ struct StatesGroup
     this->vel_end = V3D::Zero();
   }
 
-  M3D rot_end;                              // the estimated attitude (rotation matrix) at the end lidar point
-  V3D pos_end;                              // the estimated position at the end lidar point (world frame)
-  V3D vel_end;                              // the estimated velocity at the end lidar point (world frame)
-  double inv_expo_time;                     // the estimated inverse exposure time (no scale)
-  V3D bias_g;                               // gyroscope bias
-  V3D bias_a;                               // accelerator bias
-  V3D gravity;                              // the estimated gravity acceleration
-  Matrix<double, DIM_STATE, DIM_STATE> cov; // states covariance
+  /*
+   * a little difference(inverse exposure time) to the original paper formula (2)
+   * state(19): [rot_end(3), pos_end(3), inv_expo_time(1), vel_end(3), bias_g(3), bias_a(3), gravity(3)]
+   */
+  
+  // the estimated IMU attitude (rotation matrix) at the end lidar point (world frame)
+  M3D rot_end;
+  // the estimated IMU position at the end lidar point (world frame)
+  V3D pos_end;
+  // the estimated inverse exposure time (no scale) relative to the first frame
+  double inv_expo_time;
+  // the estimated IMU velocity at the end lidar point (world frame)
+  V3D vel_end;
+  // gyroscope bias
+  V3D bias_g;
+  // accelerator bias
+  V3D bias_a;
+  // the estimated gravity acceleration (world frame)  
+  V3D gravity;                              
+
+  // states covariance
+  Matrix<double, DIM_STATE, DIM_STATE> cov; 
 };
 
 template <typename T>
