@@ -25,16 +25,26 @@ class VisualPoint : boost::noncopyable
 public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-  Vector3d pos_;                //!< 3d pos of the point in the world coordinate frame.
-  Vector3d normal_;             //!< Surface normal at point.
-  Matrix3d normal_information_; //!< Inverse covariance matrix of normal estimation.
-  Vector3d previous_normal_;    //!< Last updated normal vector.
-  list<Feature *> obs_;         //!< Reference patches which observe the point.
-  Eigen::Matrix3d covariance_;  //!< Covariance of the point.
-  bool is_converged_;           //!< True if the point is converged.
-  bool is_normal_initialized_;  //!< True if the normal is initialized.
-  bool has_ref_patch_;          //!< True if the point has a reference patch.
-  Feature *ref_patch;           //!< Reference patch of the point.
+  /// \brief 3d pos of the point in the world coordinate frame.
+  Vector3d pos_;
+  /// \brief Surface normal at point.
+  Vector3d normal_;             
+  /// \brief Inverse covariance matrix of normal estimation.
+  Matrix3d normal_information_; 
+  /// \brief Last updated normal vector.
+  Vector3d previous_normal_;    
+  /// \brief Reference patches which observe the point.
+  list<Feature *> obs_;         
+  /// \brief Covariance of the point.
+  Eigen::Matrix3d covariance_; 
+  /// \brief True if the point is converged.
+  bool is_converged_;           
+  /// \brief True if the normal is initialized.
+  bool is_normal_initialized_;  
+  /// \brief True if the point has a reference patch.
+  bool has_ref_patch_;          
+  /// \brief Reference patch of the point.
+  Feature *ref_patch;          
 
   VisualPoint(const Vector3d &pos);
   ~VisualPoint();
@@ -42,7 +52,9 @@ public:
   void deleteNonRefPatchFeatures();
   void deleteFeatureRef(Feature *ftr);
   void addFrameRef(Feature *ftr);
-  bool getCloseViewObs(const Vector3d &pos, Feature *&obs, const Vector2d &cur_px) const;
+  
+  /// \brief Check if pos is closed-view to this::pos_
+  bool getCloseViewObs(const Vector3d &pos, Feature *&obs) const;
 };
 
 #endif // LIVO_POINT_H_

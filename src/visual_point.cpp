@@ -54,7 +54,7 @@ void VisualPoint::deleteFeatureRef(Feature *ftr)
   }
 }
 
-bool VisualPoint::getCloseViewObs(const Vector3d &framepos, Feature *&ftr, const Vector2d &cur_px) const
+bool VisualPoint::getCloseViewObs(const Vector3d &framepos, Feature *&ftr) const
 {
   // TODO: get frame with same point of view AND same pyramid level!
   if (obs_.size() <= 0) return false;

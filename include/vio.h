@@ -46,6 +46,7 @@ struct SubSparseMap
 
   void reset()
   {
+    ROS_DEBUG("Reset SubSparseMap.");
     propa_errors.clear();
     errors.clear();
     warp_patch.clear();
@@ -68,9 +69,16 @@ public:
 class VOXEL_POINTS
 {
 public:
+  /// \brief The visual-points in the voxel
   std::vector<VisualPoint *> voxel_points;
+  /// \brief The number of points in the voxel
   int count;
+
+public:
+  /// \brief Constructor with the number of points in the voxel
   VOXEL_POINTS(int num) : count(num) {}
+
+  /// \brief Destructor to release the memory
   ~VOXEL_POINTS() 
   { 
     for (VisualPoint* vp : voxel_points) 
@@ -124,11 +132,16 @@ public:
   /// \brief translation of world frame in camera frame
   V3D Pcw;
 
+  /* all resize to grid_n_width*gtid_n_height */
+
+  /// \brief save CellType
   vector<int> grid_num;
-  vector<int> map_index;
-  /// \brief whether the pixel is in the border of the grid cell
+  // vector<int> map_index; // useless
+  /// \brief whether the grid is in the border of the image
   vector<int> border_flag;
+  /// \brief whether the grid is updated
   vector<int> update_flag;
+  /// \brief save minimum distance
   vector<float> map_dist;
   vector<float> scan_value;
   vector<float> patch_buffer;
@@ -194,6 +207,7 @@ public:
   MatrixXd K, H_sub_inv;
 
   ofstream fout_camera, fout_colmap;
+  /// \brief Voxel Map(Local Mapping)
   unordered_map<VOXEL_LOCATION, VOXEL_POINTS *> feat_map;
   unordered_map<VOXEL_LOCATION, int> sub_feat_map; 
   unordered_map<int, Warp *> warp_map;
@@ -238,9 +252,20 @@ public:
   void updateReferencePatch(const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &plane_map);
   void precomputeReferencePatches(int level);
   void dumpDataForColmap();
+  /// \brief Peform Normalized Cross-Correlation(NCC) to measure the similarity
+  /// between two patch
+  /// \note Refer to V.D.Reference Patch Update,formula(12)
   double calculateNCC(float *ref_patch, float *cur_patch, int patch_size);
   int getBestSearchLevel(const Matrix2d &A_cur_ref, const int max_level);
   V3F getInterpolatedPixel(cv::Mat img, V2D pc);
+
+  /// \brief Peform Ray-Casting
+  void PeformRayCasting(
+      int loc_xyz[3],
+      const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &plane_map);
+
+  /// \brief Update Visual Map
+  void UpdateVisualMap(cv::Mat img,float* image_data);
   
   // void resetRvizDisplay();
   // deque<VisualPoint *> map_cur_frame;
