@@ -23,6 +23,68 @@ which is included as part of this source code package.
 #include <vikit/vision.h>
 #include <vikit/pinhole_camera.h>
 
+struct ScaledPixel {
+  int scale;
+
+  float u_ref;
+  float v_ref;
+
+  int u_ref_i;
+  int v_ref_i;
+
+  float subpix_u_ref;
+  float subpix_v_ref;
+
+  float w_ref_tl;
+  float w_ref_tr;
+  float w_ref_bl;
+  float w_ref_br;
+
+  ScaledPixel(const V2D pc, const int scale) {
+    this->scale = scale;
+    u_ref = pc[0];
+    v_ref = pc[1];
+
+    u_ref_i = floorf(u_ref / scale) * scale;
+    v_ref_i = floorf(v_ref / scale) * scale;
+
+    subpix_u_ref = (u_ref - u_ref_i) / scale;
+    subpix_v_ref = (v_ref - v_ref_i) / scale;
+
+    w_ref_tl = (1.0 - subpix_u_ref) * (1.0 - subpix_v_ref);
+    w_ref_tr = subpix_u_ref * (1.0 - subpix_v_ref);
+    w_ref_bl = (1.0 - subpix_u_ref) * subpix_v_ref;
+    w_ref_br = subpix_u_ref * subpix_v_ref;
+  }
+
+  std::array<float, 2> GetDuDv(const uint8_t *img_ptr, const int width) {
+    std::array<float, 2> du_dv = {0,0};
+    du_dv[0] =   0.5f *
+              ((w_ref_tl * img_ptr[scale] + w_ref_tr * img_ptr[scale * 2] + w_ref_bl * img_ptr[scale * width + scale] +
+                w_ref_br * img_ptr[scale * width + scale * 2]) -
+               (w_ref_tl * img_ptr[-scale] + w_ref_tr * img_ptr[0] + w_ref_bl * img_ptr[scale * width - scale] + w_ref_br * img_ptr[scale * width]));
+
+    du_dv[1] =  0.5f *
+              ((w_ref_tl * img_ptr[scale * width] + w_ref_tr * img_ptr[scale + scale * width] + w_ref_bl * img_ptr[width * scale * 2] +
+                w_ref_br * img_ptr[width * scale * 2 + scale]) -
+               (w_ref_tl * img_ptr[-scale * width] + w_ref_tr * img_ptr[-scale * width + scale] + w_ref_bl * img_ptr[0] + w_ref_br * img_ptr[scale]));
+
+    return du_dv;
+  }
+
+  V3F GetInterpolatedPixel(const cv::Mat img, const int width) {
+    V3F pixel;
+    uint8_t *img_ptr = (uint8_t *)img.data + ((v_ref_i)*width + (u_ref_i)) * 3;
+    for (int i = 0; i < 3; i++) {
+      pixel[i] = w_ref_tl * img_ptr[i] + w_ref_tr * img_ptr[i + 3] +
+                 w_ref_bl * img_ptr[i + width * 3] +
+                 w_ref_br * img_ptr[width * 3 + i + 3];
+    }
+
+    return pixel;
+  }
+};
+
 struct SubSparseMap
 {
   vector<float> propa_errors;
@@ -248,10 +310,17 @@ public:
   void insertPointIntoVoxelMap(VisualPoint *pt_new);
   void plotTrackedPoints();
   void updateFrameState(StatesGroup state);
-  void projectPatchFromRefToCur(const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &plane_map);
-  void updateReferencePatch(const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &plane_map);
+  void projectPatchFromRefToCur(
+      const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &plane_map);
+
+  /// \brief Perform V.D.Reference Patch Update
+  /// \note choose one reference patch for image alignment in the visual update
+  void updateReferencePatch(
+      const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &plane_map);
+  
   void precomputeReferencePatches(int level);
   void dumpDataForColmap();
+  
   /// \brief Peform Normalized Cross-Correlation(NCC) to measure the similarity
   /// between two patch
   /// \note Refer to V.D.Reference Patch Update,formula(12)
@@ -265,7 +334,11 @@ public:
       const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &plane_map);
 
   /// \brief Update Visual Map
-  void UpdateVisualMap(cv::Mat img,float* image_data);
+  void UpdateVisualMap(cv::Mat img, float *image_data);
+
+  /// \brief Get most similar patch as reference patch
+  /// \note: similarity score : NCC + cosine
+  void GetReferencePatch(VisualPoint *pt);
   
   // void resetRvizDisplay();
   // deque<VisualPoint *> map_cur_frame;

@@ -243,33 +243,21 @@ void VIOManager::getImagePatch(cv::Mat img, V2D pc, float *patch_tmp, int level)
 {
   // TODO(nical): ???
   // location in camera pixel coordinates
-  const float u_ref = pc[0];
-  const float v_ref = pc[1];
-
   const int scale = (1 << level);
-  const int u_ref_i = floorf(pc[0] / scale) * scale;
-  const int v_ref_i = floorf(pc[1] / scale) * scale;
-
-  const float subpix_u_ref = (u_ref - u_ref_i) / scale;
-  const float subpix_v_ref = (v_ref - v_ref_i) / scale;
-
-  const float w_ref_tl = (1.0 - subpix_u_ref) * (1.0 - subpix_v_ref);
-  const float w_ref_tr = subpix_u_ref * (1.0 - subpix_v_ref);
-  const float w_ref_bl = (1.0 - subpix_u_ref) * subpix_v_ref;
-  const float w_ref_br = subpix_u_ref * subpix_v_ref;
+  ScaledPixel ps(pc, scale);
 
   for (int x = 0; x < patch_size; x++)
   {
     uint8_t *img_ptr = (uint8_t *)img.data +
-                       (v_ref_i - patch_size_half * scale + x * scale) * width +
-                       (u_ref_i - patch_size_half * scale);
+                       (ps.v_ref_i - patch_size_half * scale + x * scale) * width +
+                       (ps.u_ref_i - patch_size_half * scale);
     
     for (int y = 0; y < patch_size; y++, img_ptr += scale)
     {
       patch_tmp[patch_size_total * level + x * patch_size + y] =
-          w_ref_tl * img_ptr[0] + w_ref_tr * img_ptr[scale] +
-          w_ref_bl * img_ptr[scale * width] +
-          w_ref_br * img_ptr[scale * width + scale];
+          ps.w_ref_tl * img_ptr[0] + ps.w_ref_tr * img_ptr[scale] +
+          ps.w_ref_bl * img_ptr[scale * width] +
+          ps.w_ref_br * img_ptr[scale * width + scale];
     }
   }
 }
@@ -421,8 +409,7 @@ double VIOManager::calculateNCC(float *ref_patch, float *cur_patch, int patch_si
   double numerator = 0, demoniator1 = 0, demoniator2 = 0;
   for (int i = 0; i < patch_size; i++)
   {
-    double n = (ref_patch[i] - mean_ref) * (cur_patch[i] - mean_curr);
-    numerator += n;
+    numerator += (ref_patch[i] - mean_ref) * (cur_patch[i] - mean_curr);
     demoniator1 += (ref_patch[i] - mean_ref) * (ref_patch[i] - mean_ref);
     demoniator2 += (cur_patch[i] - mean_curr) * (cur_patch[i] - mean_curr);
   }
@@ -602,16 +589,15 @@ void VIOManager::computeJacobianAndUpdateEKF(cv::Mat img)
   
   compute_jacobian_time = update_ekf_time = 0.0;
 
-  for (int level = patch_pyrimid_level - 1; level >= 0; level--)
-  {
-    if (inverse_composition_en)
-    {
+  for (int level = patch_pyrimid_level - 1; level >= 0; level--) {
+    if (inverse_composition_en) {
       has_ref_patch_cache = false;
       updateStateInverse(img, level);
-    }
-    else
+    } else {
       updateState(img, level);
+    }
   }
+
   state->cov -= G * state->cov;
   updateFrameState(*state);
 }
@@ -689,8 +675,10 @@ void VIOManager::generateVisualMapPoints(cv::Mat img, vector<pointWithVar> &pg)
       float *patch = new float[patch_size_total];
       getImagePatch(img, pc, patch, 0);
 
+      // Create new visual-point
       VisualPoint *pt_new = new VisualPoint(pt);
 
+      // Add feature to visual-point
       Vector3d f = cam->cam2world(pc);
       Feature *ftr_new = new Feature(pt_new, patch, pc, f, new_frame_->T_f_w_, 0);
       ftr_new->img_ = img;
@@ -701,11 +689,15 @@ void VIOManager::generateVisualMapPoints(cv::Mat img, vector<pointWithVar> &pg)
       pt_new->covariance_ = pt_var.var;
       pt_new->is_normal_initialized_ = true;
 
-      if (cos_theta < 0) { pt_new->normal_ = -pt_var.normal; }
-      else { pt_new->normal_ = pt_var.normal; }
-      
+      if (cos_theta < 0) {
+        pt_new->normal_ = -pt_var.normal;
+      } else {
+        pt_new->normal_ = pt_var.normal;
+      }
+
       pt_new->previous_normal_ = pt_new->normal_;
 
+      // Insert new visual-point to voxel-map
       insertPointIntoVoxelMap(pt_new);
       add += 1;
       // map_cur_frame.push_back(pt_new);
@@ -714,7 +706,7 @@ void VIOManager::generateVisualMapPoints(cv::Mat img, vector<pointWithVar> &pg)
 
   // double t_b2 = omp_get_wtime() - t0;
 
-  printf("[ VIO ] Append %d new visual map points\n", add);
+  ROS_INFO("[ VIO ] Append %d new visual map points\n", add);
   // printf("pg.size: %d \n", pg.size());
   // printf("B1. : %.6lf \n", t_b1);
   // printf("B2. : %.6lf \n", t_b2);
@@ -736,24 +728,25 @@ void VIOManager::updateVisualMapPoints(cv::Mat img)
       continue;
     }
 
-    V2D pc(new_frame_->w2c(pt->pos_));
     bool add_flag = false;
-    
+    V2D pc(new_frame_->w2c(pt->pos_));
     float *patch_temp = new float[patch_size_total];
     getImagePatch(img, pc, patch_temp, 0);
-    // TODO: condition: distance and view_angle
-    // Step 1: time
-    Feature *last_feature = pt->obs_.back();
-    // if(new_frame_->id_ >= last_feature->id_ + 10) add_flag = true; // 10
 
-    // Step 2: delta_pose
+    // Get last patch
+    Feature *last_feature = pt->obs_.back();
+
+    // A. Update when translation or rotation diff is large
     SE3 pose_ref = last_feature->T_f_w_;
     SE3 delta_pose = pose_ref * pose_cur.inverse();
     double delta_p = delta_pose.translation().norm();
-    double delta_theta = (delta_pose.rotation_matrix().trace() > 3.0 - 1e-6) ? 0.0 : std::acos(0.5 * (delta_pose.rotation_matrix().trace() - 1));
-    if (delta_p > 0.5 || delta_theta > 0.3) add_flag = true; // 0.5 || 0.3
+    double delta_theta =
+        (delta_pose.rotation_matrix().trace() > 3.0 - 1e-6)
+            ? 0.0
+            : std::acos(0.5 * (delta_pose.rotation_matrix().trace() - 1));
+    if (delta_p > 0.5 || delta_theta > 0.3) add_flag = true; 
 
-    // Step 3: pixel distance
+    // B. Update when view angle(pixel) diff is large
     Vector2d last_px = last_feature->px_;
     double pixel_dist = (pc - last_px).norm();
     if (pixel_dist > 40) add_flag = true;
@@ -764,21 +757,24 @@ void VIOManager::updateVisualMapPoints(cv::Mat img)
       Feature *ref_ftr;
       pt->findMinScoreFeature(new_frame_->pos(), ref_ftr);
       pt->deleteFeatureRef(ref_ftr);
-      // cout<<"pt->obs_.size() exceed 20 !!!!!!"<<endl;
     }
+
+    // Add new patch to visual-point
     if (add_flag)
     {
       update_num += 1;
       update_flag[i] = 1;
       Vector3d f = cam->cam2world(pc);
-      Feature *ftr_new = new Feature(pt, patch_temp, pc, f, new_frame_->T_f_w_, visual_submap->search_levels[i]);
+      Feature *ftr_new = new Feature(pt, patch_temp, pc, f, new_frame_->T_f_w_,
+                                     visual_submap->search_levels[i]);
       ftr_new->img_ = img;
       ftr_new->id_ = new_frame_->id_;
       ftr_new->inv_expo_time_ = state->inv_expo_time;
       pt->addFrameRef(ftr_new);
     }
   }
-  printf("[ VIO ] Update %d points in visual submap\n", update_num);
+  
+  ROS_INFO("[ VIO ] Update %d points in visual submap\n", update_num);
 }
 
 void VIOManager::updateReferencePatch(const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &plane_map)
@@ -810,10 +806,15 @@ void VIOManager::updateReferencePatch(const unordered_map<VOXEL_LOCATION, VoxelO
       if (current_octo->plane_ptr_->is_plane_)
       {
         VoxelPlane &plane = *current_octo->plane_ptr_;
-        float dis_to_plane = plane.normal_(0) * p_w(0) + plane.normal_(1) * p_w(1) + plane.normal_(2) * p_w(2) + plane.d_;
+        float dis_to_plane = plane.normal_(0) * p_w(0) +
+                             plane.normal_(1) * p_w(1) +
+                             plane.normal_(2) * p_w(2) + plane.d_;
         float dis_to_plane_abs = fabs(dis_to_plane);
-        float dis_to_center = (plane.center_(0) - p_w(0)) * (plane.center_(0) - p_w(0)) +
-                              (plane.center_(1) - p_w(1)) * (plane.center_(1) - p_w(1)) + (plane.center_(2) - p_w(2)) * (plane.center_(2) - p_w(2));
+        float dis_to_center =
+            (plane.center_(0) - p_w(0)) * (plane.center_(0) - p_w(0)) +
+            (plane.center_(1) - p_w(1)) * (plane.center_(1) - p_w(1)) +
+            (plane.center_(2) - p_w(2)) * (plane.center_(2) - p_w(2));
+        
         float range_dis = sqrt(dis_to_center - dis_to_plane * dis_to_plane);
         if (range_dis <= 3 * plane.radius_)
         {
@@ -830,9 +831,12 @@ void VIOManager::updateReferencePatch(const unordered_map<VOXEL_LOCATION, VoxelO
             // V3D pf_ref(pt->ref_patch->T_f_w_ * pt->pos_);
             // V3D norm_vec_ref(pt->ref_patch->T_f_w_.rotation_matrix() *
             // plane.normal); double cos_ref = pf_ref.dot(norm_vec_ref);
-            
-            if (pt->previous_normal_.dot(plane.normal_) < 0) { pt->normal_ = -plane.normal_; }
-            else { pt->normal_ = plane.normal_; }
+
+            if (pt->previous_normal_.dot(plane.normal_) < 0) {
+              pt->normal_ = -plane.normal_;
+            } else {
+              pt->normal_ = plane.normal_;
+            }
 
             double normal_update = (pt->normal_ - pt->previous_normal_).norm();
 
@@ -848,69 +852,8 @@ void VIOManager::updateReferencePatch(const unordered_map<VOXEL_LOCATION, VoxelO
       }
     }
 
-    float score_max = -1000.;
-    for (auto it = pt->obs_.begin(), ite = pt->obs_.end(); it != ite; ++it)
-    {
-      Feature *ref_patch_temp = *it;
-      float *patch_temp = ref_patch_temp->patch_;
-      float NCC_up = 0.0;
-      float NCC_down1 = 0.0;
-      float NCC_down2 = 0.0;
-      float NCC = 0.0;
-      float score = 0.0;
-      int count = 0;
-
-      V3D pf = ref_patch_temp->T_f_w_ * pt->pos_;
-      V3D norm_vec = ref_patch_temp->T_f_w_.rotation_matrix() * pt->normal_;
-      pf.normalize();
-      double cos_angle = pf.dot(norm_vec);
-      // if(fabs(cos_angle) < 0.86) continue; // 20 degree
-
-      float ref_mean;
-      if (abs(ref_patch_temp->mean_) < 1e-6)
-      {
-        float ref_sum = std::accumulate(patch_temp, patch_temp + patch_size_total, 0.0);
-        ref_mean = ref_sum / patch_size_total;
-        ref_patch_temp->mean_ = ref_mean;
-      }
-
-      for (auto itm = pt->obs_.begin(), itme = pt->obs_.end(); itm != itme; ++itm)
-      {
-        if ((*itm)->id_ == ref_patch_temp->id_) continue;
-        float *patch_cache = (*itm)->patch_;
-
-        float other_mean;
-        if (abs((*itm)->mean_) < 1e-6)
-        {
-          float other_sum = std::accumulate(patch_cache, patch_cache + patch_size_total, 0.0);
-          other_mean = other_sum / patch_size_total;
-          (*itm)->mean_ = other_mean;
-        }
-
-        for (int ind = 0; ind < patch_size_total; ind++)
-        {
-          NCC_up += (patch_temp[ind] - ref_mean) * (patch_cache[ind] - other_mean);
-          NCC_down1 += (patch_temp[ind] - ref_mean) * (patch_temp[ind] - ref_mean);
-          NCC_down2 += (patch_cache[ind] - other_mean) * (patch_cache[ind] - other_mean);
-        }
-        NCC += fabs(NCC_up / sqrt(NCC_down1 * NCC_down2));
-        count++;
-      }
-
-      NCC = NCC / count;
-
-      score = NCC + cos_angle;
-
-      ref_patch_temp->score_ = score;
-
-      if (score > score_max)
-      {
-        score_max = score;
-        pt->ref_patch = ref_patch_temp;
-        pt->has_ref_patch_ = true;
-      }
-    }
-
+    // Choose one reference patch with similarity
+    GetReferencePatch(pt);
   }
 }
 
@@ -1170,34 +1113,20 @@ void VIOManager::precomputeReferencePatches(int level)
     computeProjectionJacobian(pf, Jdpi);
     p_w_hat << SKEW_SYM_MATRX(pt->pos_);
 
-    const float u_ref = pc[0];
-    const float v_ref = pc[1];
-    const int u_ref_i = floorf(pc[0] / scale) * scale;
-    const int v_ref_i = floorf(pc[1] / scale) * scale;
-    const float subpix_u_ref = (u_ref - u_ref_i) / scale;
-    const float subpix_v_ref = (v_ref - v_ref_i) / scale;
-    const float w_ref_tl = (1.0 - subpix_u_ref) * (1.0 - subpix_v_ref);
-    const float w_ref_tr = subpix_u_ref * (1.0 - subpix_v_ref);
-    const float w_ref_bl = (1.0 - subpix_u_ref) * subpix_v_ref;
-    const float w_ref_br = subpix_u_ref * subpix_v_ref;
+    ScaledPixel ps(pc, scale);
+    std::array<float,2> du_dv;
 
     for (int x = 0; x < patch_size; x++)
     {
-      uint8_t *img_ptr = (uint8_t *)img.data + (v_ref_i + x * scale - patch_size_half * scale) * width + u_ref_i - patch_size_half * scale;
+      uint8_t *img_ptr =
+          (uint8_t *)img.data +
+          (ps.v_ref_i + x * scale - patch_size_half * scale) * width + ps.u_ref_i -
+          patch_size_half * scale;
       for (int y = 0; y < patch_size; ++y, img_ptr += scale)
       {
-        float du =
-            0.5f *
-            ((w_ref_tl * img_ptr[scale] + w_ref_tr * img_ptr[scale * 2] + w_ref_bl * img_ptr[scale * width + scale] +
-              w_ref_br * img_ptr[scale * width + scale * 2]) -
-             (w_ref_tl * img_ptr[-scale] + w_ref_tr * img_ptr[0] + w_ref_bl * img_ptr[scale * width - scale] + w_ref_br * img_ptr[scale * width]));
-        float dv =
-            0.5f *
-            ((w_ref_tl * img_ptr[scale * width] + w_ref_tr * img_ptr[scale + scale * width] + w_ref_bl * img_ptr[width * scale * 2] +
-              w_ref_br * img_ptr[width * scale * 2 + scale]) -
-             (w_ref_tl * img_ptr[-scale * width] + w_ref_tr * img_ptr[-scale * width + scale] + w_ref_bl * img_ptr[0] + w_ref_br * img_ptr[scale]));
+        du_dv = ps.GetDuDv(img_ptr, width);
 
-        Jimg << du, dv;
+        Jimg << du_dv[0], du_dv[1];
         Jimg = Jimg * (1.0 / scale);
 
         JdR = Jimg * Jdpi * R_ref_w * p_w_hat;
@@ -1261,25 +1190,22 @@ void VIOManager::updateStateInverse(cv::Mat img, int level)
       V3D pf = Rcw * pt->pos_ + Pcw;
       pc = cam->world2cam(pf);
 
-      const float u_ref = pc[0];
-      const float v_ref = pc[1];
-      const int u_ref_i = floorf(pc[0] / scale) * scale;
-      const int v_ref_i = floorf(pc[1] / scale) * scale;
-      const float subpix_u_ref = (u_ref - u_ref_i) / scale;
-      const float subpix_v_ref = (v_ref - v_ref_i) / scale;
-      const float w_ref_tl = (1.0 - subpix_u_ref) * (1.0 - subpix_v_ref);
-      const float w_ref_tr = subpix_u_ref * (1.0 - subpix_v_ref);
-      const float w_ref_bl = (1.0 - subpix_u_ref) * subpix_v_ref;
-      const float w_ref_br = subpix_u_ref * subpix_v_ref;
+      ScaledPixel ps(pc, scale);
 
       vector<float> P = visual_submap->warp_patch[i];
       for (int x = 0; x < patch_size; x++)
       {
-        uint8_t *img_ptr = (uint8_t *)img.data + (v_ref_i + x * scale - patch_size_half * scale) * width + u_ref_i - patch_size_half * scale;
+        uint8_t *img_ptr =
+            (uint8_t *)img.data +
+            (ps.v_ref_i + x * scale - patch_size_half * scale) * width +
+            ps.u_ref_i - patch_size_half * scale;
+        
         for (int y = 0; y < patch_size; ++y, img_ptr += scale)
         {
-          double res = w_ref_tl * img_ptr[0] + w_ref_tr * img_ptr[scale] + w_ref_bl * img_ptr[scale * width] +
-                       w_ref_br * img_ptr[scale * width + scale] - P[patch_size_total * level + x * patch_size + y];
+          double res = ps.w_ref_tl * img_ptr[0] + ps.w_ref_tr * img_ptr[scale] +
+                       ps.w_ref_bl * img_ptr[scale * width] +
+                       ps.w_ref_br * img_ptr[scale * width + scale] -
+                       P[patch_size_total * level + x * patch_size + y];
           z(i * patch_size_total + x * patch_size + y) = res;
           patch_error += res * res;
           MD(1, 3) J_dR = H_sub_inv.block<1, 3>(i * patch_size_total + x * patch_size + y, 0);
@@ -1392,16 +1318,8 @@ void VIOManager::updateState(cv::Mat img, int level)
       M3D p_hat;
       p_hat << SKEW_SYM_MATRX(pf);
 
-      float u_ref = pc[0];
-      float v_ref = pc[1];
-      int u_ref_i = floorf(pc[0] / scale) * scale;
-      int v_ref_i = floorf(pc[1] / scale) * scale;
-      float subpix_u_ref = (u_ref - u_ref_i) / scale;
-      float subpix_v_ref = (v_ref - v_ref_i) / scale;
-      float w_ref_tl = (1.0 - subpix_u_ref) * (1.0 - subpix_v_ref);
-      float w_ref_tr = subpix_u_ref * (1.0 - subpix_v_ref);
-      float w_ref_bl = (1.0 - subpix_u_ref) * subpix_v_ref;
-      float w_ref_br = subpix_u_ref * subpix_v_ref;
+      ScaledPixel ps(pc, scale);
+      std::array<float, 2> du_dv;
 
       vector<float> P = visual_submap->warp_patch[i];
       double inv_ref_expo = visual_submap->inv_expo_list[i];
@@ -1409,21 +1327,15 @@ void VIOManager::updateState(cv::Mat img, int level)
 
       for (int x = 0; x < patch_size; x++)
       {
-        uint8_t *img_ptr = (uint8_t *)img.data + (v_ref_i + x * scale - patch_size_half * scale) * width + u_ref_i - patch_size_half * scale;
+        uint8_t *img_ptr =
+            (uint8_t *)img.data +
+            (ps.v_ref_i + x * scale - patch_size_half * scale) * width +
+            ps.u_ref_i - patch_size_half * scale;
         for (int y = 0; y < patch_size; ++y, img_ptr += scale)
         {
-          float du =
-              0.5f *
-              ((w_ref_tl * img_ptr[scale] + w_ref_tr * img_ptr[scale * 2] + w_ref_bl * img_ptr[scale * width + scale] +
-                w_ref_br * img_ptr[scale * width + scale * 2]) -
-               (w_ref_tl * img_ptr[-scale] + w_ref_tr * img_ptr[0] + w_ref_bl * img_ptr[scale * width - scale] + w_ref_br * img_ptr[scale * width]));
-          float dv =
-              0.5f *
-              ((w_ref_tl * img_ptr[scale * width] + w_ref_tr * img_ptr[scale + scale * width] + w_ref_bl * img_ptr[width * scale * 2] +
-                w_ref_br * img_ptr[width * scale * 2 + scale]) -
-               (w_ref_tl * img_ptr[-scale * width] + w_ref_tr * img_ptr[-scale * width + scale] + w_ref_bl * img_ptr[0] + w_ref_br * img_ptr[scale]));
-
-          Jimg << du, dv;
+          du_dv = ps.GetDuDv(img_ptr, width);
+          
+          Jimg << du_dv[0], du_dv[1];
           Jimg = Jimg * state->inv_expo_time;
           Jimg = Jimg * inv_scale;
           Jdphi = Jimg * Jdpi * p_hat;
@@ -1431,8 +1343,10 @@ void VIOManager::updateState(cv::Mat img, int level)
           JdR = Jdphi * Jdphi_dR + Jdp * Jdp_dR;
           Jdt = Jdp * Jdp_dt;
 
-          double cur_value =
-              w_ref_tl * img_ptr[0] + w_ref_tr * img_ptr[scale] + w_ref_bl * img_ptr[scale * width] + w_ref_br * img_ptr[scale * width + scale];
+          double cur_value = ps.w_ref_tl * img_ptr[0] +
+                             ps.w_ref_tr * img_ptr[scale] +
+                             ps.w_ref_bl * img_ptr[scale * width] +
+                             ps.w_ref_br * img_ptr[scale * width + scale];
           double res = state->inv_expo_time * cur_value - inv_ref_expo * P[patch_size_total * level + x * patch_size + y];
 
           z(i * patch_size_total + x * patch_size + y) = res;
@@ -1962,4 +1876,85 @@ void VIOManager::UpdateVisualMap(cv::Mat img,float *image_data) {
 
   total_points = visual_submap->voxel_points.size();
   ROS_INFO("[ VIO ] Retrieve %d points from visual sparse map\n", total_points);
+}
+
+void VIOManager::GetReferencePatch(VisualPoint *pt) {
+  float overall_score;
+  float score_max = -1000.;
+  double cos_similarity = 0.0;
+
+  int ncc_count;
+  float target_dev, reference_dev;
+  float ref_sum, ref_mean, tar_sum, tar_mean;
+  float ncc_similarity, sum_ref_tar, sum_ref_2, sum_tar_2;
+
+  for (Feature *ref_patch : pt->obs_) {
+    // Initialize NCC related variable
+    ncc_count = 0;
+    ncc_similarity = 0.0;
+    sum_ref_tar = 0.0;
+    sum_ref_2 = 0.0;
+    sum_tar_2 = 0.0;
+
+    overall_score = 0.0;
+
+    // Compute cosine similarity
+    V3D pf = ref_patch->T_f_w_ * pt->pos_;
+    V3D norm_vec = ref_patch->T_f_w_.rotation_matrix()*pt->normal_;
+    pf.normalize();
+    cos_similarity = pf.dot(norm_vec);
+
+    // Compute candidate reference patch's mean for NCC 
+    float* ref_patch_ptr = ref_patch->patch_;
+    if (abs(ref_patch->mean_) < 1e-6) {
+      ref_sum = std::accumulate(ref_patch_ptr,
+                                ref_patch_ptr + patch_size_total, 0.0);
+      ref_mean = ref_sum / patch_size_total;
+      ref_patch->mean_ = ref_mean;
+    }
+
+    for (Feature *tar_patch : pt->obs_) {
+      // skip same patch
+      if (tar_patch->id_ == ref_patch->id_)
+        continue;
+
+      // Compute candiate target patch's mean for NCC
+      float *tar_patch_ptr = tar_patch->patch_;
+      if (abs(tar_patch->mean_) < 1e-6) {
+        tar_sum = std::accumulate(tar_patch_ptr,
+                                  tar_patch_ptr + patch_size_total, 0.0);
+        tar_mean = tar_sum / patch_size_total;
+        tar_patch->mean_ = tar_mean;
+      }
+
+      // Compute NCC similarity. refer to formula(12)
+      for (int i = 0; i < patch_size_total; i++) {
+        reference_dev = ref_patch_ptr[i] - ref_patch->mean_;
+        target_dev = tar_patch_ptr[i] - tar_patch->mean_;
+
+        sum_ref_tar += reference_dev * target_dev;
+        sum_ref_2 += reference_dev * reference_dev;
+        sum_tar_2 += target_dev * target_dev;
+      }
+
+      ncc_count++;
+      ncc_similarity +=
+          std::fabs(sum_ref_tar / std::sqrt(sum_ref_2 * sum_tar_2));
+
+    }
+
+    // Get NCC simlarity and overal score with Cosine similarity
+    ncc_similarity /= ncc_count;
+    overall_score = ncc_similarity + cos_similarity;
+
+    // Update overall score, choose highest score as reference patch
+    ref_patch->score_ = overall_score;
+    if (overall_score > score_max) {
+      score_max = overall_score;
+
+      pt->ref_patch = ref_patch;
+      pt->has_ref_patch_ = true;
+    }
+    
+  }
 }
