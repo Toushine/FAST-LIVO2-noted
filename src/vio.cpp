@@ -1202,14 +1202,20 @@ void VIOManager::updateStateInverse(cv::Mat img, int level)
         
         for (int y = 0; y < patch_size; ++y, img_ptr += scale)
         {
+          // photometric error refer to formula(14)
           double res = ps.w_ref_tl * img_ptr[0] + ps.w_ref_tr * img_ptr[scale] +
                        ps.w_ref_bl * img_ptr[scale * width] +
                        ps.w_ref_br * img_ptr[scale * width + scale] -
                        P[patch_size_total * level + x * patch_size + y];
           z(i * patch_size_total + x * patch_size + y) = res;
           patch_error += res * res;
-          MD(1, 3) J_dR = H_sub_inv.block<1, 3>(i * patch_size_total + x * patch_size + y, 0);
-          MD(1, 3) J_dt = H_sub_inv.block<1, 3>(i * patch_size_total + x * patch_size + y, 3);
+
+          MD(1, 3)
+          J_dR = H_sub_inv.block<1, 3>(
+              i * patch_size_total + x * patch_size + y, 0);
+          MD(1, 3)
+          J_dt = H_sub_inv.block<1, 3>(
+              i * patch_size_total + x * patch_size + y, 3);
           JdR = J_dR * Rwi + J_dt * P_wi_hat * Rwi;
           Jdt = J_dt * Rwi;
           H_sub.block<1, 6>(i * patch_size_total + x * patch_size + y, 0) << JdR, Jdt;
@@ -1231,20 +1237,33 @@ void VIOManager::updateStateInverse(cv::Mat img, int level)
       old_state = (*state);
       last_error = error;
 
-      auto &&H_sub_T = H_sub.transpose();
-      H_T_H.setZero();
+      // Refer to IV.D formula (11)
+      // R:covariance matrix of the measurement noise,set to identity
       G.setZero();
+      H_T_H.setZero();
+      
+      auto &&H_sub_T = H_sub.transpose();
       H_T_H.block<6, 6>(0, 0) = H_sub_T * H_sub;
-      MD(DIM_STATE, DIM_STATE) &&K_1 = (H_T_H + (state->cov / img_point_cov).inverse()).inverse();
-      auto &&HTz = H_sub_T * z;
-      auto vec = (*state_propagat) - (*state);
-      G.block<DIM_STATE, 6>(0, 0) = K_1.block<DIM_STATE, 6>(0, 0) * H_T_H.block<6, 6>(0, 0);
-      auto solution = -K_1.block<DIM_STATE, 6>(0, 0) * HTz + vec - G.block<DIM_STATE, 6>(0, 0) * vec.block<6, 1>(0, 0);
-      (*state) += solution;
-      auto &&rot_add = solution.block<3, 1>(0, 0);
-      auto &&t_add = solution.block<3, 1>(3, 0);
+      MD(DIM_STATE, DIM_STATE) &&K_1 =
+          (H_T_H + (state->cov / img_point_cov).inverse()).inverse();
+      G.block<DIM_STATE, 6>(0, 0) =
+          K_1.block<DIM_STATE, 6>(0, 0) * H_T_H.block<6, 6>(0, 0);
 
-      if ((rot_add.norm() * 57.3f < 0.001f) && (t_add.norm() * 100.0f < 0.001f)) { EKF_end = true; }
+      auto state_error = (*state_propagat) - (*state);
+      auto state_add =
+          -K_1.block<DIM_STATE, 6>(0, 0) * H_sub_T * z + state_error -
+          G.block<DIM_STATE, 6>(0, 0) * state_error.block<6, 1>(0, 0);
+      
+      // Update state
+      (*state) += state_add;
+
+      // Check if achieve convergence conditions
+      auto &&rot_add = state_add.block<3, 1>(0, 0);
+      auto &&t_add = state_add.block<3, 1>(3, 0);
+      if ((rot_add.norm() * 57.3f < 0.001f) &&
+          (t_add.norm() * 100.0f < 0.001f)) {
+        EKF_end = true;
+      }
     }
     else
     {
@@ -1347,15 +1366,25 @@ void VIOManager::updateState(cv::Mat img, int level)
                              ps.w_ref_tr * img_ptr[scale] +
                              ps.w_ref_bl * img_ptr[scale * width] +
                              ps.w_ref_br * img_ptr[scale * width + scale];
-          double res = state->inv_expo_time * cur_value - inv_ref_expo * P[patch_size_total * level + x * patch_size + y];
+          // photometric error refer to formula(14)
+          double res =
+              state->inv_expo_time * cur_value -
+              inv_ref_expo * P[patch_size_total * level + x * patch_size + y];
 
           z(i * patch_size_total + x * patch_size + y) = res;
 
           patch_error += res * res;
           n_meas += 1;
-          
-          if (exposure_estimate_en) { H_sub.block<1, 7>(i * patch_size_total + x * patch_size + y, 0) << JdR, Jdt, cur_value; }
-          else { H_sub.block<1, 6>(i * patch_size_total + x * patch_size + y, 0) << JdR, Jdt; }
+
+          if (exposure_estimate_en) {
+            // 3+3+1
+            H_sub.block<1, 7>(i * patch_size_total + x * patch_size + y, 0)
+                << JdR, Jdt, cur_value;
+          } else {
+            // 3+3
+            H_sub.block<1, 6>(i * patch_size_total + x * patch_size + y, 0)
+                << JdR, Jdt;
+          }
         }
       }
       visual_submap->errors[i] = patch_error;
@@ -1379,29 +1408,34 @@ void VIOManager::updateState(cv::Mat img, int level)
       old_state = (*state);
       last_error = error;
 
-      // K = (H.transpose() / img_point_cov * H + state->cov.inverse()).inverse() * H.transpose() / img_point_cov; auto
-      // vec = (*state_propagat) - (*state); G = K*H;
-      // (*state) += (-K*z + vec - G*vec);
+      // Refer to IV.D formula (11)
+      // R:covariance matrix of the measurement noise,set to identity
+      G.setZero();
+      H_T_H.setZero();
 
       auto &&H_sub_T = H_sub.transpose();
-      H_T_H.setZero();
-      G.setZero();
       H_T_H.block<7, 7>(0, 0) = H_sub_T * H_sub;
-      MD(DIM_STATE, DIM_STATE) &&K_1 = (H_T_H + (state->cov / img_point_cov).inverse()).inverse();
-      auto &&HTz = H_sub_T * z;
-      // K = K_1.block<DIM_STATE,6>(0,0) * H_sub_T;
-      auto vec = (*state_propagat) - (*state);
-      G.block<DIM_STATE, 7>(0, 0) = K_1.block<DIM_STATE, 7>(0, 0) * H_T_H.block<7, 7>(0, 0);
+      MD(DIM_STATE, DIM_STATE) &&K_1 =
+          (H_T_H + (state->cov / img_point_cov).inverse()).inverse();
+      G.block<DIM_STATE, 7>(0, 0) =
+          K_1.block<DIM_STATE, 7>(0, 0) * H_T_H.block<7, 7>(0, 0);
+      
+      auto state_error = (*state_propagat) - (*state);
       MD(DIM_STATE, 1)
-      solution = -K_1.block<DIM_STATE, 7>(0, 0) * HTz + vec - G.block<DIM_STATE, 7>(0, 0) * vec.block<7, 1>(0, 0);
+      state_add = -K_1.block<DIM_STATE, 7>(0, 0) * H_sub_T * z + state_error -
+                 G.block<DIM_STATE, 7>(0, 0) * state_error.block<7, 1>(0, 0);
 
-      (*state) += solution;
-      auto &&rot_add = solution.block<3, 1>(0, 0);
-      auto &&t_add = solution.block<3, 1>(3, 0);
+      // Update state
+      (*state) += state_add;
 
-      auto &&expo_add = solution.block<1, 1>(6, 0);
-      // if ((rot_add.norm() * 57.3f < 0.001f) && (t_add.norm() * 100.0f < 0.001f) && (expo_add.norm() < 0.001f)) EKF_end = true;
-      if ((rot_add.norm() * 57.3f < 0.001f) && (t_add.norm() * 100.0f < 0.001f))  EKF_end = true;
+      // Check if achieve convergence conditions
+      auto &&rot_add = state_add.block<3, 1>(0, 0);
+      auto &&t_add = state_add.block<3, 1>(3, 0);
+      // auto &&expo_add = state_add.block<1, 1>(6, 0);
+      if ((rot_add.norm() * 57.3f < 0.001f) &&
+          (t_add.norm() * 100.0f < 0.001f)) {
+        EKF_end = true;
+      }
     }
     else
     {
@@ -1453,12 +1487,15 @@ void VIOManager::plotTrackedPoints()
 
     if (visual_submap->errors[i] <= visual_submap->propa_errors[i])
     {
-      // inlier_count++;
-      cv::circle(img_cp, cv::Point2f(pc[0], pc[1]), 7, cv::Scalar(0, 255, 0), -1, 8); // Green Sparse Align tracked
+      // Green Sparse Align tracked
+      cv::circle(img_cp, cv::Point2f(pc[0], pc[1]), 7, cv::Scalar(0, 255, 0),
+                 -1, 8);
     }
     else
     {
-      cv::circle(img_cp, cv::Point2f(pc[0], pc[1]), 7, cv::Scalar(255, 0, 0), -1, 8); // Blue Sparse Align tracked
+      // Blue Sparse Align tracked
+      cv::circle(img_cp, cv::Point2f(pc[0], pc[1]), 7, cv::Scalar(255, 0, 0),
+                 -1, 8);
     }
   }
   // std::string text = std::to_string(inlier_count) + " " + std::to_string(total_points);

@@ -265,7 +265,13 @@ public:
   int frame_count = 0;
   bool plot_flag;
 
-  Matrix<double, DIM_STATE, DIM_STATE> G, H_T_H;
+  /* Related to ESIKF */
+
+  /// \brief K*H
+  Matrix<double, DIM_STATE, DIM_STATE> G;
+  /// \brief H^T*H
+  Matrix<double, DIM_STATE, DIM_STATE> H_T_H;
+  
   MatrixXd K, H_sub_inv;
 
   ofstream fout_camera, fout_colmap;
