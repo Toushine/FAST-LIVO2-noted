@@ -49,34 +49,40 @@ public:
   void Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, PointCloudXYZI::Ptr cur_pcl_un_);
   void UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_inout, PointCloudXYZI &pcl_out);
 
-  ofstream fout_imu;
-  double IMU_mean_acc_norm;
-  V3D unbiased_gyr;
+private:
+  void IMU_init(const MeasureGroup &meas, StatesGroup &state, int &N);
+  void Forward_without_imu(LidarMeasureGroup &meas, StatesGroup &state_inout, PointCloudXYZI &pcl_out);
 
+public:
+  double first_lidar_time;
+  double IMU_mean_acc_norm;
+
+  bool imu_need_init = true;
+  bool imu_time_init = false;
+  
+private:
   V3D cov_acc;
   V3D cov_gyr;
   V3D cov_bias_gyr;
   V3D cov_bias_acc;
-  double cov_inv_expo;
-  double first_lidar_time;
-  bool imu_time_init = false;
-  bool imu_need_init = true;
-  M3D Eye3d;
-  V3D Zero3d;
-
-private:
-  void IMU_init(const MeasureGroup &meas, StatesGroup &state, int &N);
-  void Forward_without_imu(LidarMeasureGroup &meas, StatesGroup &state_inout, PointCloudXYZI &pcl_out);
-  PointCloudXYZI pcl_wait_proc;
-  sensor_msgs::ImuConstPtr last_imu;
-  PointCloudXYZI::Ptr cur_pcl_un_;
-  vector<Pose6D> IMUpose;
-  M3D Lid_rot_to_IMU;
-  V3D Lid_offset_to_IMU;
   V3D mean_acc;
   V3D mean_gyr;
   V3D angvel_last;
   V3D acc_s_last;
+
+  M3D Lid_rot_to_IMU;
+  V3D Lid_offset_to_IMU;
+
+  double cov_inv_expo;
+  
+  M3D Eye3d;
+  V3D Zero3d;
+
+  PointCloudXYZI pcl_wait_proc;
+  sensor_msgs::ImuConstPtr last_imu;
+  PointCloudXYZI::Ptr cur_pcl_un_;
+  vector<Pose6D> IMUpose;
+
   double last_prop_end_time;
   double time_last_scan;
   int init_iter_num = 1, MAX_INI_COUNT = 20;
