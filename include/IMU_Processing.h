@@ -77,6 +77,7 @@ private:
   
   M3D Eye3d;
   V3D Zero3d;
+  int lidar_type;
 
   PointCloudXYZI pcl_wait_proc;
   sensor_msgs::ImuConstPtr last_imu;

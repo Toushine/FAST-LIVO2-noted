@@ -175,7 +175,7 @@ void VIOManager::initializeVIO()
   patch_size_half = static_cast<int>(patch_size / 2);
   patch_buffer.resize(patch_size_total);
   warp_len = patch_size_total * patch_pyrimid_level;
-  border = (patch_size_half + 2) * 8;
+  border = (patch_size_half + 1) * (1 << patch_pyrimid_level);
 
   ROS_DEBUG("patch_size: %d, patch_size_total: %d,patch_pyrimid_level: %d, "
             "warp_len: %d, border: %d.",
